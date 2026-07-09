@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <title>WebSocket Chat</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 0; padding: 20px; background: #f0f0f0; }
+        #app { max-width: 700px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+        h1 { margin-top: 0; }
+        #login, #chat { display: none; }
+        #login.active, #chat.active { display: block; }
+        #layout { display: flex; gap: 15px; margin-top: 15px; }
+        #messages { flex: 1; height: 350px; border: 1px solid #ccc; padding: 10px; overflow-y: auto; background: #fafafa; border-radius: 4px; }
+        #users { width: 180px; border: 1px solid #ccc; padding: 10px; background: #fafafa; border-radius: 4px; }
+        #users h3 { margin-top: 0; font-size: 14px; }
+        #users ul { list-style: none; padding: 0; margin: 0; }
+        #users li { padding: 4px 0; }
+        .msg { margin: 4px 0; }
+        .msg .from { font-weight: bold; }
+        .system { color: #888; font-style: italic; }
+        .error { color: #c00; font-weight: bold; }
+        #inputRow { display: flex; gap: 8px; margin-top: 10px; }
+        input[type=text] { flex: 1; padding: 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 14px; }
+        button { padding: 8px 16px; background: #0066cc; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; }
+        button:hover { background: #0052a3; }
+        button:disabled { background: #999; cursor: not-allowed; }
+    </style>
+</head>
+<body>
+<div id="app">
+    <h1>WebSocket Chat</h1>
+
+    <div id="login" class="active">
+        <p>Kullanıcı adınızı girin:</p>
+        <div id="inputRow">
+            <input type="text" id="usernameInput" placeholder="Kullanıcı adı" autofocus>
+            <button id="joinBtn">Katıl</button>
+        </div>
+        <p id="loginError" class="error"></p>
+    </div>
+
+    <div id="chat">
+        <div id="layout">
+            <div id="messages"></div>
+            <div id="users">
+                <h3>Bağlı Kullanıcılar</h3>
+                <ul id="userList"></ul>
+            </div>
+        </div>
+        <div id="inputRow">
+            <input type="text" id="messageInput" placeholder="Mesajınızı yazın..." disabled>
+            <button id="sendBtn" disabled>Gönder</button>
+        </div>
+    </div>
+</div>
+
+<script>
+    const loginDiv     = document.getElementById("login");
+    const chatDiv      = document.getElementById("chat");
+    const usernameInput= document.getElementById("usernameInput");
+    const joinBtn      = document.getElementById("joinBtn");
+    const loginError   = document.getElementById("loginError");
+    const messagesDiv  = document.getElementById("messages");
+    const userListUl   = document.getElementById("userList");
+    const messageInput = document.getElementById("messageInput");
+    const sendBtn      = document.getElementById("sendBtn");
+
+    let ws = null;
+    let username = null;
+    let reconnectDelay = 1000;           // 1 sn'den başla
+    const MAX_RECONNECT_DELAY = 30000;   // 30 sn'de tavan yap
+    let manualClose = false;             // kullanıcı bilinçli çıktı mı?
+
+    function showChat() {
+        loginDiv.classList.remove("active");
+        chatDiv.classList.add("active");
+        messageInput.disabled = false;
+        sendBtn.disabled = false;
+        messageInput.focus();
+    }
+
+    function addMessage(html, cssClass = "") {
+        const div = document.createElement("div");
+        div.className = "msg " + cssClass;
+        div.innerHTML = html;
+        messagesDiv.appendChild(div);
+        messagesDiv.scrollTop = messagesDiv.scrollHeight;
+    }
+
+    function escapeHtml(text) {
+        const d = document.createElement("div");
+        d.textContent = text;
+        return d.innerHTML;
+    }
+
+    function updateUserList(users) {
+        userListUl.innerHTML = "";
+        users.forEach(u => {
+            const li = document.createElement("li");
+            li.textContent = u;
+            userListUl.appendChild(li);
+        });
+    }
+
+    function connect() {
+        ws = new WebSocket("ws://localhost:8025/websockets/chat");
+
+        ws.onopen = () => {
+            reconnectDelay = 1000; // başarılı bağlantıda gecikmeyi sıfırla
+            ws.send(JSON.stringify({ type: "join", username: username }));
+            messageInput.disabled = false;
+            sendBtn.disabled = false;
+        };
+
+        ws.onmessage = (event) => {
+            const msg = JSON.parse(event.data);
+            switch (msg.type) {
+                case "system":
+                    addMessage(escapeHtml(msg.text), "system");
+                    if (!chatDiv.classList.contains("active")) showChat();
+                    break;
+                case "message":
+                    addMessage(
+                        "<span class='from'>" + escapeHtml(msg.from) + ":</span> " + escapeHtml(msg.text)
+                    );
+                    break;
+                case "userJoined":
+                    addMessage(escapeHtml(msg.username) + " katıldı.", "system");
+                    break;
+                case "userLeft":
+                    addMessage(escapeHtml(msg.username) + " ayrıldı.", "system");
+                    break;
+                case "userList":
+                    updateUserList(msg.users);
+                    break;
+                case "error":
+                    if (!chatDiv.classList.contains("active")) {
+                        loginError.textContent = msg.text;
+                        manualClose = true; // yanlış kullanıcı adı, reconnect deneme
+                        ws.close();
+                    } else {
+                        addMessage("Hata: " + escapeHtml(msg.text), "error");
+                    }
+                    break;
+            }
+        };
+
+        ws.onclose = () => {
+            messageInput.disabled = true;
+            sendBtn.disabled = true;
+
+            if (manualClose) {
+                addMessage("Bağlantı kapatıldı.", "error");
+                return;
+            }
+
+            if (!username) {
+                // Henüz join olmamıştık, reconnect anlamsız
+                return;
+            }
+
+            addMessage(
+                "Bağlantı koptu. " + (reconnectDelay / 1000) + " saniye içinde tekrar denenecek...",
+                "error"
+            );
+
+            setTimeout(() => {
+                addMessage("Yeniden bağlanılıyor...", "system");
+                connect();
+            }, reconnectDelay);
+
+            reconnectDelay = Math.min(reconnectDelay * 2, MAX_RECONNECT_DELAY);
+        };
+
+        ws.onerror = () => {
+            if (!chatDiv.classList.contains("active")) {
+                loginError.textContent = "Sunucuya bağlanılamadı.";
+            }
+        };
+    }
+
+    joinBtn.addEventListener("click", () => {
+        const name = usernameInput.value.trim();
+        if (!name) {
+            loginError.textContent = "Kullanıcı adı boş olamaz.";
+            return;
+        }
+        loginError.textContent = "";
+        username = name;
+        manualClose = false;
+        connect();
+    });
+
+    usernameInput.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") joinBtn.click();
+    });
+
+    sendBtn.addEventListener("click", () => {
+        const text = messageInput.value.trim();
+        if (!text || !ws || ws.readyState !== WebSocket.OPEN) return;
+        ws.send(JSON.stringify({ type: "message", text: text }));
+        messageInput.value = "";
+    });
+
+    messageInput.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") sendBtn.click();
+    });
+</script>
+</body>
+</html>

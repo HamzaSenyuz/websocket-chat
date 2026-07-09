@@ -1,0 +1,28 @@
+# Maven derleme çıktıları
+target/
+
+# IntelliJ IDEA
+.idea/
+*.iml
+*.iws
+*.ipr
+out/
+
+# Eclipse (belki başka biri açar)
+.classpath
+.project
+.settings/
+bin/
+
+# VS Code
+.vscode/
+
+# İşletim sistemi
+.DS_Store
+Thumbs.db
+
+# Loglar
+*.log
+
+# Java derleme çıktıları
+*.class
