@@ -27,7 +27,7 @@ public class ChatServer {
     public void onOpen(Session session) {
         System.out.println("Yeni bağlantı: " + session.getId() + " (henüz anonim)");
 
-        session.setMaxIdleTimeout(6_000); // 60 saniye
+        session.setMaxIdleTimeout(60_000); // 60 saniye
     }
 
     @OnMessage
